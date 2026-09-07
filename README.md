@@ -35,15 +35,18 @@ This plugin is a front end: every number it shows comes from [lazyagent](https:/
 
 ### 1. Install lazyagent
 
-On Omarchy (and any other Arch-based system) the recommended way is the native Arch package published with every [lazyagent release](https://github.com/illegalstudio/lazyagent/releases/latest). Download the `Lazyagent_<version>_linux_amd64.pkg.tar.zst` asset and install it with pacman:
+On Omarchy (and any other Arch-based system) the recommended way is the native Arch package published with every [lazyagent release](https://github.com/illegalstudio/lazyagent/releases/latest). The snippet below resolves the latest version, downloads the `Lazyagent_<version>_linux_amd64.pkg.tar.zst` asset, verifies it against the release checksums, and installs it with pacman:
 
 ```bash
-# Replace 0.15.4 with the latest release
-curl -LO https://github.com/illegalstudio/lazyagent/releases/download/v0.15.4/Lazyagent_0.15.4_linux_amd64.pkg.tar.zst
-sudo pacman -U ./Lazyagent_0.15.4_linux_amd64.pkg.tar.zst
+version="$(curl -fsSL https://api.github.com/repos/illegalstudio/lazyagent/releases/latest | grep -Po '"tag_name":\s*"v\K[^"]+')"
+base="https://github.com/illegalstudio/lazyagent/releases/download/v${version}"
+curl -fLO "${base}/Lazyagent_${version}_linux_amd64.pkg.tar.zst"
+curl -fLO "${base}/lazyagent_${version}_linux_checksums.txt"
+sha256sum -c --ignore-missing "lazyagent_${version}_linux_checksums.txt"
+sudo pacman -U "./Lazyagent_${version}_linux_amd64.pkg.tar.zst"
 ```
 
-The package installs the `lazyagent` command in `/usr/bin` together with the desktop launcher, so the plugin finds it without any configuration. Updating means downloading the newer package and running `pacman -U` again.
+The package installs the `lazyagent` command in `/usr/bin` together with the desktop launcher, so the plugin finds it without any configuration. Updating means running the same snippet again: it always picks the newest release.
 
 lazyagent will soon be available on the [AUR](https://aur.archlinux.org/) as well; once it is, `yay -S lazyagent` (or your AUR helper of choice) becomes the simplest path and keeps it updated with the rest of the system.
 
