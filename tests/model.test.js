@@ -1,0 +1,180 @@
+#!/usr/bin/env node
+// Loads Model.js (a QML ".pragma library" file, otherwise plain ES5) under
+// node and checks the pure helpers the panel relies on.
+
+"use strict";
+
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const source = fs.readFileSync(path.join(__dirname, "..", "Model.js"), "utf8")
+  .replace(/^\.pragma library\s*$/m, "");
+const Model = {};
+vm.runInNewContext(source + "\n" + [
+  "asNumber", "clamp", "toList", "percentText", "ratioText", "formatDuration",
+  "remainingSeconds", "resetText", "agoText", "paceText", "paceDetail",
+  "paceTone", "severityRank", "windowAlarming", "windowsOf", "headlineUsed",
+  "worstSeverity", "anyOverutilizing", "errorsOfKind", "agentName",
+  "silentAgentsText", "statusText", "tooltipText",
+].map((name) => `Model.${name} = ${name};`).join("\n"), { Model });
+
+const claudeWindow = {
+  label: "5-hour", window_minutes: 300, used_percent: 4, expected_percent: 73.57,
+  pace_known: true, pace_ratio: 0.054, pace_label: "underutilizing",
+  used_severity: "ok", resets_at: "2026-09-07T14:29:59Z",
+  reset_in_seconds: 4757, reset_relative: "in 1h 19m",
+};
+const codexWindow = {
+  label: "7-day", window_minutes: 10080, used_percent: 11, expected_percent: 3.67,
+  pace_known: true, pace_ratio: 2.999, pace_label: "overutilizing",
+  used_severity: "ok", resets_at: "2026-09-14T09:01:00+02:00",
+  reset_in_seconds: 582617, reset_relative: "in 6d 17h",
+};
+const reports = [
+  {
+    agent: "claude", provider: "Claude Code", short_name: "Claude",
+    windows: [claudeWindow],
+    summary: {
+      five_hour: { used_percent: 4, expected_percent: 73.57, severity: "ok", text: "" },
+      week_global: { used_percent: 5, expected_percent: 91.77, severity: "ok", text: "" },
+    },
+  },
+  {
+    agent: "codex", provider: "Codex", short_name: "Codex",
+    windows: [codexWindow],
+    summary: { five_hour: null, week_global: { used_percent: 11, expected_percent: 3.67, severity: "danger", text: "" } },
+  },
+];
+const errors = [
+  { agent: "kimi", kind: "not_installed", message: "Kimi Code CLI is not installed." },
+  { agent: "grok", kind: "error", message: "token expired" },
+];
+
+let passed = 0;
+function test(name, fn) {
+  fn();
+  passed += 1;
+  console.log(`ok - ${name}`);
+}
+
+test("toList accepts array-likes and rejects the rest", () => {
+  // Arrays built inside the vm context have a foreign prototype, so compare
+  // by shape rather than by identity.
+  const shape = (value) => JSON.stringify(value);
+  assert.equal(shape(Model.toList([1, 2])), "[1,2]");
+  assert.equal(shape(Model.toList({ length: 2, 0: "a", 1: "b" })), '["a","b"]');
+  assert.equal(shape(Model.toList(null)), "[]");
+  assert.equal(shape(Model.toList("nope")), "[]");
+  assert.equal(shape(Model.windowsOf({ windows: { length: 1, 0: { label: "x" } } })), '[{"label":"x"}]');
+});
+
+test("percentText rounds to one decimal and drops .0", () => {
+  assert.equal(Model.percentText(4), "4%");
+  assert.equal(Model.percentText(73.57058), "73.6%");
+  assert.equal(Model.percentText("garbage"), "0%");
+});
+
+test("ratioText keeps two decimals under ten", () => {
+  assert.equal(Model.ratioText(0.054), "0.05×");
+  assert.equal(Model.ratioText(2.999), "3×");
+  assert.equal(Model.ratioText(12.4), "12×");
+});
+
+test("formatDuration mirrors lazyagent's relative format", () => {
+  assert.equal(Model.formatDuration(45), "45s");
+  assert.equal(Model.formatDuration(4757), "1h 19m");
+  assert.equal(Model.formatDuration(582617), "6d 17h");
+  assert.equal(Model.formatDuration(720), "12m");
+  assert.equal(Model.formatDuration(-5), "0s");
+});
+
+test("remainingSeconds counts down from the fetch instant", () => {
+  assert.equal(Model.remainingSeconds(claudeWindow, 1000, 1000), 4757);
+  assert.equal(Model.remainingSeconds(claudeWindow, 1000, 61000), 4697);
+  assert.equal(Model.remainingSeconds(claudeWindow, 1000, 1000 + 5000 * 1000), 0);
+  assert.equal(Model.remainingSeconds({ reset_in_seconds: 0 }, 0, 0), 0);
+});
+
+test("resetText distinguishes unknown from due", () => {
+  assert.equal(Model.resetText(claudeWindow, 1000, 1000), "Resets in 1h 19m");
+  assert.equal(Model.resetText({ reset_in_seconds: 0, resets_at: "" }, 0, 0), "");
+  assert.equal(Model.resetText({ reset_in_seconds: 0, resets_at: "2026-01-01T00:00:00Z" }, 0, 0), "Reset due");
+});
+
+test("agoText", () => {
+  assert.equal(Model.agoText(0, 5000), "");
+  assert.equal(Model.agoText(1000, 4000), "Updated just now");
+  assert.equal(Model.agoText(1000, 1000 + 125 * 1000), "Updated 2m ago");
+});
+
+test("pace helpers follow lazyagent's labels", () => {
+  assert.equal(Model.paceText(claudeWindow), "Underutilizing");
+  assert.equal(Model.paceTone(claudeWindow), "under");
+  assert.equal(Model.paceTone(codexWindow), "over");
+  assert.equal(Model.paceTone({ pace_known: true, pace_label: "on track" }), "track");
+  assert.equal(Model.paceTone({ pace_known: false, pace_label: "" }), "unknown");
+  assert.equal(Model.paceText({ pace_known: false }), "Pace unknown");
+  assert.equal(Model.paceDetail(claudeWindow), "0.05× of expected 73.6%");
+  assert.equal(Model.paceDetail({ pace_known: false }), "");
+});
+
+test("alarming windows are severe or nearly exhausted", () => {
+  assert.equal(Model.windowAlarming(claudeWindow), false);
+  assert.equal(Model.windowAlarming({ used_percent: 91, used_severity: "ok" }), true);
+  assert.equal(Model.windowAlarming({ used_percent: 20, used_severity: "warn" }), true);
+  assert.equal(Model.windowAlarming({ used_percent: 20, used_severity: "danger" }), true);
+});
+
+test("aggregates across reports", () => {
+  assert.equal(Model.headlineUsed(reports), 11);
+  assert.equal(Model.headlineUsed([]), -1);
+  assert.equal(Model.worstSeverity(reports), 0);
+  assert.equal(Model.worstSeverity([{ windows: [{ used_percent: 95, used_severity: "ok" }] }]), 3);
+  assert.equal(Model.anyOverutilizing(reports), true);
+  assert.equal(Model.anyOverutilizing([reports[0]]), false);
+});
+
+test("errors are split by kind", () => {
+  assert.equal(Model.errorsOfKind(errors, "error").length, 1);
+  assert.equal(Model.errorsOfKind(errors, "not_installed")[0].agent, "kimi");
+  assert.equal(Model.silentAgentsText(errors), "Kimi Code is not installed or not reporting.");
+  assert.equal(Model.silentAgentsText([
+    { agent: "kimi", kind: "not_installed" },
+    { agent: "cursor", kind: "unavailable" },
+  ]), "Kimi Code, Cursor are not installed or not reporting.");
+  assert.equal(Model.silentAgentsText([]), "");
+});
+
+test("agentName", () => {
+  assert.equal(Model.agentName("claude"), "Claude Code");
+  assert.equal(Model.agentName("cursor"), "Cursor");
+  assert.equal(Model.agentName("whatever"), "whatever");
+  assert.equal(Model.agentName(""), "Unknown agent");
+});
+
+test("statusText covers every state", () => {
+  assert.equal(Model.statusText(false, false, true, [], []), "Reading limits");
+  assert.equal(Model.statusText(false, false, false, [], []), "Waiting for lazyagent");
+  assert.equal(Model.statusText(true, false, false, [], []), "lazyagent is not installed");
+  assert.equal(Model.statusText(true, true, false, [], [errors[1]]), "Could not read any limits");
+  assert.equal(Model.statusText(true, true, false, [], []), "No agents reporting");
+  assert.equal(Model.statusText(true, true, false, reports, []), "Overutilizing");
+  assert.equal(Model.statusText(true, true, false, [reports[0]], []), "1 pool reporting");
+  assert.equal(Model.statusText(true, true, false,
+    [{ windows: [{ used_percent: 99, used_severity: "danger" }] }], []), "A window is nearly exhausted");
+});
+
+test("tooltipText summarises every pool", () => {
+  assert.equal(Model.tooltipText(false, false, [], []), "Lazyagent: checking limits");
+  assert.equal(Model.tooltipText(true, false, [], []), "Lazyagent: lazyagent is not installed");
+  assert.equal(Model.tooltipText(true, true, reports, []),
+    "Claude: 5h 4% · week 5%\nCodex: week 11%");
+  assert.equal(Model.tooltipText(true, true, [], [errors[1]]), "Lazyagent: token expired");
+  assert.equal(Model.tooltipText(true, true, [], []), "Lazyagent: no agents reporting");
+  assert.equal(Model.tooltipText(true, true, [{ agent: "grok", short_name: "Grok",
+    windows: [{ label: "weekly", used_percent: 5 }], summary: {} }], []), "Grok: weekly 5%");
+});
+
+console.log(`\n${passed} model tests passed`);
