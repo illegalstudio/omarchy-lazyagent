@@ -73,6 +73,66 @@ function agoText(fetchedAtMs, nowMs) {
   return "Updated " + formatDuration(seconds) + " ago"
 }
 
+// Seconds left in a provider backoff, 0 when none is active.
+function backoffRemaining(untilMs, nowMs) {
+  var until = asNumber(untilMs, 0)
+  if (until <= 0) return 0
+  return Math.max(0, (until - asNumber(nowMs, 0)) / 1000)
+}
+
+// Milliseconds of the report's own fetch, or the fallback when the report
+// carries none. Stale reports keep the instant they were actually read.
+function reportFetchedAtMs(report, fallbackMs) {
+  var seconds = report ? asNumber(report.fetched_at, 0) : 0
+  return seconds > 0 ? seconds * 1000 : asNumber(fallbackMs, 0)
+}
+
+// "Stale · 12m ago" for a report kept from an earlier snapshot, else "".
+function staleText(report, nowMs) {
+  if (!report || report.stale !== true) return ""
+  var fetched = reportFetchedAtMs(report, 0)
+  if (fetched <= 0) return "Stale"
+  var seconds = Math.max(0, (asNumber(nowMs, 0) - fetched) / 1000)
+  return "Stale · " + formatDuration(seconds) + " ago"
+}
+
+function reportFor(reports, agent) {
+  var list = toList(reports)
+  for (var i = 0; i < list.length; i++) {
+    if (String(list[i].agent || "") === String(agent || "")) return list[i]
+  }
+  return null
+}
+
+function anyStale(reports) {
+  var list = toList(reports)
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].stale === true) return true
+  }
+  return false
+}
+
+// One sentence for the Issues section. A rate-limited agent says when the
+// next attempt is and, when an older report is on screen, how old it is.
+function issueText(error, reports, nowMs, backoffRemainingSec) {
+  if (!error) return ""
+  var name = agentName(error.agent)
+  if (error.rate_limited === true) {
+    var text = name + ": rate limited by the provider."
+    var remaining = asNumber(backoffRemainingSec, 0)
+    text += remaining > 0
+      ? " Retrying in " + formatDuration(remaining) + "."
+      : " Retrying at the next refresh."
+    var report = reportFor(reports, error.agent)
+    if (report && report.stale === true) {
+      var age = Math.max(0, (asNumber(nowMs, 0) - reportFetchedAtMs(report, 0)) / 1000)
+      text += " Showing data from " + formatDuration(age) + " ago."
+    }
+    return text
+  }
+  return name + ": " + String(error.message || "limits unavailable")
+}
+
 // Pace as lazyagent defines it: used < 0.85 × elapsed is underutilizing,
 // > 1.15 × is overutilizing. The label comes from lazyagent; this only maps
 // it to a display string and a tone.
@@ -186,9 +246,11 @@ function silentAgentsText(errors) {
     + " not installed or not reporting."
 }
 
-function statusText(loaded, installed, refreshing, reports, errors) {
+function statusText(loaded, installed, refreshing, reports, errors, backoffRemainingSec) {
   if (!loaded) return refreshing ? "Reading limits" : "Waiting for lazyagent"
   if (!installed) return "lazyagent is not installed"
+  var remaining = asNumber(backoffRemainingSec, 0)
+  if (remaining > 0) return "Rate limited · retry in " + formatDuration(remaining)
   var count = toList(reports).length
   var failures = errorsOfKind(errors, "error").length
   if (count === 0 && failures > 0) return "Could not read any limits"
@@ -216,7 +278,8 @@ function tooltipText(loaded, installed, reports, errors) {
         parts.push(windows[j].label + " " + percentText(windows[j].used_percent))
       }
     }
-    lines.push(String(report.short_name || report.provider || report.agent) + ": " + parts.join(" · "))
+    lines.push(String(report.short_name || report.provider || report.agent) + ": " + parts.join(" · ")
+      + (report.stale === true ? "  (stale)" : ""))
   }
   if (lines.length === 0) {
     var failures = errorsOfKind(errors, "error")

@@ -17,7 +17,8 @@ vm.runInNewContext(source + "\n" + [
   "remainingSeconds", "resetText", "agoText", "paceText", "paceDetail",
   "paceTone", "severityRank", "windowAlarming", "windowsOf", "headlineUsed",
   "worstSeverity", "anyOverutilizing", "errorsOfKind", "agentName",
-  "silentAgentsText", "statusText", "tooltipText",
+  "silentAgentsText", "statusText", "tooltipText", "backoffRemaining",
+  "reportFetchedAtMs", "staleText", "reportFor", "anyStale", "issueText",
 ].map((name) => `Model.${name} = ${name};`).join("\n"), { Model });
 
 const claudeWindow = {
@@ -154,6 +155,31 @@ test("agentName", () => {
   assert.equal(Model.agentName(""), "Unknown agent");
 });
 
+test("backoff and stale helpers", () => {
+  assert.equal(Model.backoffRemaining(0, 5000), 0);
+  assert.equal(Model.backoffRemaining(10000, 4000), 6);
+  assert.equal(Model.backoffRemaining(10000, 20000), 0);
+
+  const stale = { agent: "claude", stale: true, fetched_at: 1000 };
+  assert.equal(Model.reportFetchedAtMs(stale, 5), 1000000);
+  assert.equal(Model.reportFetchedAtMs({ agent: "codex" }, 5), 5);
+  assert.equal(Model.staleText(stale, 1000000 + 125 * 1000), "Stale · 2m ago");
+  assert.equal(Model.staleText({ stale: true }, 0), "Stale");
+  assert.equal(Model.staleText(reports[0], 0), "");
+  assert.equal(Model.reportFor([stale, reports[1]], "codex").provider, "Codex");
+  assert.equal(Model.reportFor([], "codex"), null);
+  assert.equal(Model.anyStale([stale]), true);
+  assert.equal(Model.anyStale(reports), false);
+
+  const limited = { agent: "claude", kind: "error", rate_limited: true, message: "429" };
+  assert.equal(Model.issueText(limited, [stale], 1000000 + 600 * 1000, 240),
+    "Claude Code: rate limited by the provider. Retrying in 4m. Showing data from 10m ago.");
+  assert.equal(Model.issueText(limited, [], 0, 0),
+    "Claude Code: rate limited by the provider. Retrying at the next refresh.");
+  assert.equal(Model.issueText(errors[1], [], 0, 0), "Grok: token expired");
+  assert.equal(Model.issueText(null, [], 0, 0), "");
+});
+
 test("statusText covers every state", () => {
   assert.equal(Model.statusText(false, false, true, [], []), "Reading limits");
   assert.equal(Model.statusText(false, false, false, [], []), "Waiting for lazyagent");
@@ -164,6 +190,7 @@ test("statusText covers every state", () => {
   assert.equal(Model.statusText(true, true, false, [reports[0]], []), "1 pool reporting");
   assert.equal(Model.statusText(true, true, false,
     [{ windows: [{ used_percent: 99, used_severity: "danger" }] }], []), "A window is nearly exhausted");
+  assert.equal(Model.statusText(true, true, false, reports, [], 250), "Rate limited · retry in 4m");
 });
 
 test("tooltipText summarises every pool", () => {
@@ -171,6 +198,8 @@ test("tooltipText summarises every pool", () => {
   assert.equal(Model.tooltipText(true, false, [], []), "Lazyagent: lazyagent is not installed");
   assert.equal(Model.tooltipText(true, true, reports, []),
     "Claude: 5h 4% · week 5%\nCodex: week 11%");
+  assert.equal(Model.tooltipText(true, true, [{ ...reports[1], stale: true }], []),
+    "Codex: week 11%  (stale)");
   assert.equal(Model.tooltipText(true, true, [], [errors[1]]), "Lazyagent: token expired");
   assert.equal(Model.tooltipText(true, true, [], []), "Lazyagent: no agents reporting");
   assert.equal(Model.tooltipText(true, true, [{ agent: "grok", short_name: "Grok",
