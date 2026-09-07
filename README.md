@@ -92,6 +92,15 @@ Agents that are installed but failed to answer are listed under **Issues**. Agen
 
 Right-click the bar icon to refresh without opening the panel. Opening the panel refreshes only when the data is older than a minute.
 
+## Refreshes, backoff, and stale data
+
+lazyagent reads each provider through the undocumented endpoints their own CLIs use, and those endpoints rate-limit quickly. The plugin is careful with them:
+
+- **Cached snapshots.** The bridge keeps the last snapshot in `~/.local/state/omarchy-lazyagent/limits.json` (or under `$XDG_STATE_HOME`). Automatic refreshes ask for data no older than a given age and are answered from that file when possible: the shell start accepts data as old as `refreshIntervalSec`, opening the panel accepts one minute, the periodic timer 30 seconds. Restarting the shell therefore does not call the providers again.
+- **Backoff on rate limits.** When any agent answers with a rate limit (HTTP 429 or a "rate limited" message), the bridge records an exponential backoff of 2, 4, 8, 16 minutes and so on, capped at 30 minutes. While it runs, every automatic refresh is served from the cache, and the panel title reads "Rate limited · retry in N". The backoff is stored in the state file, so it also survives shell restarts. It clears as soon as a snapshot comes back without rate-limit errors.
+- **Stale reports.** An agent that fails to report keeps showing its last good numbers, marked with a red **Stale · N ago** pill and slightly dimmed, for up to three days. The reset countdowns of a stale report count from the moment it was actually read. The **Issues** section explains what happened, when the next attempt is, and how old the data on screen is.
+- **Manual refresh always runs.** `R`, the refresh button, the right-click on the icon, and the `refresh` IPC call force a new lazyagent run even during a backoff. Use them knowingly.
+
 ## lazyagent setup
 
 Every number comes from `lazyagent limits --json`. See [Install](#install) for how to get lazyagent on Omarchy; the Arch package from the release page is the recommended route, and an AUR package is on its way.
@@ -100,7 +109,7 @@ The plugin discovers existing installations through `PATH`, `mise which lazyagen
 
 When `lazyagent` is missing, the bar icon is dimmed and the panel shows a notice with **Installation instructions** (opens the [Install](#install) section of this README) and **Check again** buttons. After installing it, click **Check again**, reopen the panel, or wait for the next scheduled refresh; no restart is needed.
 
-lazyagent reads each provider's usage through the undocumented endpoints their own CLIs use. The plugin calls it only on the configured interval, on demand, and when the panel is opened with stale data. See the [lazyagent disclaimer](https://github.com/illegalstudio/lazyagent#limits) before relying on the numbers.
+lazyagent reads each provider's usage through the undocumented endpoints their own CLIs use. The plugin calls it only on the configured interval, on demand, and when the panel is opened with old data, and it backs off when a provider rate-limits (see [Refreshes, backoff, and stale data](#refreshes-backoff-and-stale-data)). See the [lazyagent disclaimer](https://github.com/illegalstudio/lazyagent#limits) before relying on the numbers.
 
 ## Requirements
 
@@ -163,7 +172,7 @@ Point the bridge at a specific executable with `OMARCHY_LAZYAGENT_BIN=/path/to/l
 
 ## Safety
 
-The bridge passes a fixed argument array to `lazyagent` and never invokes a shell. The only variable argument, the agent filter, is checked against a closed list in both QML and Python. lazyagent's output is capped at 512 KiB, parsed as JSON, and re-emitted with only known keys, coerced types, and bounded list sizes before it reaches Quickshell. A lazyagent run is given 60 seconds before it is abandoned.
+The bridge passes a fixed argument array to `lazyagent` and never invokes a shell. The only variable arguments, the agent filter and the maximum cache age, are checked against a closed list and a digit pattern in both QML and Python. lazyagent's output is capped at 512 KiB, parsed as JSON, and re-emitted with only known keys, coerced types, and bounded list sizes before it reaches Quickshell. The state file goes through the same sanitiser when it is read back, so a corrupt or edited file is simply ignored. A lazyagent run is given 60 seconds before it is abandoned.
 
 The plugin is read-only: it never writes to any provider or to lazyagent's configuration.
 
