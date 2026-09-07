@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "illegalstudio.omarchy-lazyagent",
+  "name": "Lazyagent",
+  "version": "0.1.0",
+  "author": "illegalstudio",
+  "license": "MIT",
+  "description": "Coding agent rate limits and pace in the Omarchy bar, powered by lazyagent.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Lazyagent",
+    "description": "Used and expected percentage for every rate-limit window of Claude Code, Codex, Grok, Kimi, and Cursor, with pace and reset countdowns.",
+    "category": "AI",
+    "aliases": [
+      "lazyagent",
+      "limits",
+      "rate-limits",
+      "usage"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "agent": "all",
+      "refreshIntervalSec": 300
+    },
+    "schema": [
+      {
+        "key": "agent",
+        "type": "enum",
+        "label": "Agents to query",
+        "options": [
+          "all",
+          "claude",
+          "codex",
+          "grok",
+          "kimi",
+          "cursor"
+        ],
+        "defaultValue": "all"
+      },
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval in seconds",
+        "min": 60,
+        "max": 3600,
+        "step": 30,
+        "defaultValue": 300
+      }
+    ]
+  }
+}
