@@ -54,7 +54,7 @@ Panel {
     backend.panelOpen = opened
     if (opened) {
       panelFlick.contentY = 0
-      backend.refreshIfStale(60)
+      backend.refresh("open")
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
     }
   }
@@ -72,7 +72,7 @@ Panel {
     function show(): void { root.open() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
-    function refresh(): string { backend.refresh(); return "ok" }
+    function refresh(): string { backend.refresh("manual"); return "ok" }
     function status(): string { return backend.statusText }
     function debug(): string {
       return JSON.stringify({
@@ -85,7 +85,13 @@ Panel {
         errors: backend.errors.length,
         headlineUsed: backend.headlineUsed,
         worstSeverity: backend.worstSeverity,
-        snapshotError: backend.snapshotError
+        snapshotError: backend.snapshotError,
+        fromCache: backend.fromCache,
+        fetchedAt: backend.fetchedAtMs,
+        backoffUntil: backend.backoffUntilMs,
+        backoffLevel: backend.backoffLevel,
+        backoffReason: backend.backoffReason,
+        anyStale: backend.anyStale
       })
     }
   }
@@ -182,7 +188,8 @@ Panel {
             trailingControl: Component {
               PanelActionButton {
                 iconText: "󰑐"
-                tooltipText: "Refresh limits (R)"
+                tooltipText: backend.inBackoff
+                  ? "Refresh now, ignoring the backoff (R)" : "Refresh limits (R)"
                 foreground: root.foreground
                 enabled: !backend.busy
                 onClicked: backend.refresh()
@@ -296,8 +303,8 @@ Panel {
                 required property var modelData
                 width: parent.width
                 tone: root.urgent
-                text: Model.agentName(modelData.agent) + ": "
-                  + String(modelData.message || "limits unavailable")
+                text: Model.issueText(modelData, backend.reports, backend.nowMs,
+                  backend.backoffRemainingSec)
               }
             }
           }
@@ -359,6 +366,8 @@ Panel {
 
     property var report: ({})
     readonly property var windows: Model.windowsOf(report)
+    readonly property string staleLabel: Model.staleText(report, backend.nowMs)
+    readonly property double fetchedAtMs: Model.reportFetchedAtMs(report, backend.fetchedAtMs)
 
     spacing: Style.space(8)
 
@@ -374,6 +383,27 @@ Panel {
         foreground: root.foreground
         fontFamily: root.fontFamily
         elide: Text.ElideRight
+      }
+
+      // Kept from an earlier snapshot because the agent failed this time.
+      BorderSurface {
+        visible: section.staleLabel !== ""
+        implicitWidth: staleText.implicitWidth + Style.space(10)
+        implicitHeight: staleText.implicitHeight + Style.space(4)
+        color: "transparent"
+        borderSpec: Border.controlSpec("normal", root.urgent, root.urgent)
+        radius: Style.cornerRadius
+
+        Text {
+          id: staleText
+          anchors.centerIn: parent
+          textFormat: Text.PlainText
+          text: section.staleLabel
+          color: root.urgent
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          font.bold: true
+        }
       }
 
       Text {
@@ -397,6 +427,8 @@ Panel {
           required property int index
           width: parent.width
           window: index < section.windows.length ? section.windows[index] : ({})
+          fetchedAtMs: section.fetchedAtMs
+          stale: section.staleLabel !== ""
         }
       }
     }
@@ -408,6 +440,8 @@ Panel {
     id: limitRow
 
     property var window: ({})
+    property double fetchedAtMs: backend.fetchedAtMs
+    property bool stale: false
 
     readonly property bool alarming: Model.windowAlarming(window)
     readonly property string tone: Model.paceTone(window)
@@ -419,6 +453,7 @@ Panel {
       Model.asNumber(window.expected_percent, 0) / 100, 0, 1)
 
     spacing: Style.space(5)
+    opacity: stale ? 0.72 : 1.0
 
     Item {
       width: parent.width
@@ -538,7 +573,7 @@ Panel {
 
       Text {
         textFormat: Text.PlainText
-        text: Model.resetText(limitRow.window, backend.fetchedAtMs, backend.nowMs)
+        text: Model.resetText(limitRow.window, limitRow.fetchedAtMs, backend.nowMs)
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
