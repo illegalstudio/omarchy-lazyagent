@@ -37,6 +37,8 @@ MAX_OUTPUT = 512 * 1024
 MAX_REPORTS = 32
 MAX_WINDOWS = 16
 MAX_ERRORS = 16
+MAX_RESETS = 16
+MAX_CREDITS = 8
 LIMITS_TIMEOUT = 60
 STATE_VERSION = 1
 BACKOFF_BASE_SECONDS = 120
@@ -182,6 +184,8 @@ def sanitize_window(raw: Any) -> dict[str, Any] | None:
         return None
     return {
         "label": as_text(raw.get("label"), 64) or "window",
+        "scope": as_text(raw.get("scope"), 64),
+        "detail": as_text(raw.get("detail"), 240),
         "window_minutes": int(max(0.0, as_number(raw.get("window_minutes")))),
         "used_percent": max(0.0, as_number(raw.get("used_percent"))),
         "expected_percent": max(0.0, as_number(raw.get("expected_percent"))),
@@ -192,6 +196,47 @@ def sanitize_window(raw: Any) -> dict[str, Any] | None:
         "resets_at": as_text(raw.get("resets_at"), 64),
         "reset_in_seconds": int(max(0.0, as_number(raw.get("reset_in_seconds")))),
         "reset_relative": as_text(raw.get("reset_relative"), 32),
+    }
+
+
+def as_amount(value: Any) -> float | None:
+    """A credit amount, or None when lazyagent says the provider did not
+    report it. Unlike percentages, amounts may legitimately be negative."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return float(value) if math.isfinite(float(value)) else None
+
+
+def sanitize_reset(raw: Any) -> dict[str, Any] | None:
+    """A banked limit reset. Only the countdowns are kept, not the absolute
+    instants: the panel ticks them from the report's fetch time, like the
+    window resets."""
+    if not isinstance(raw, dict):
+        return None
+    return {
+        "label": as_text(raw.get("label"), 160) or "Limit reset",
+        "left": int(max(0.0, as_number(raw.get("left")))),
+        "total": int(max(0.0, as_number(raw.get("total")))),
+        "usable": raw.get("usable") is True,
+        "status": as_text(raw.get("status"), 120),
+        "expires_in_seconds": int(max(0.0, as_number(raw.get("expires_in_seconds")))),
+        "next_available_in_seconds": int(max(0.0, as_number(raw.get("next_available_in_seconds")))),
+        "text": as_text(raw.get("text"), 240),
+    }
+
+
+def sanitize_credit(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    return {
+        "label": as_text(raw.get("label"), 64) or "Credits",
+        "unit": as_text(raw.get("unit"), 16),
+        "enabled": raw.get("enabled") is True,
+        "balance": as_amount(raw.get("balance")),
+        "used": as_amount(raw.get("used")),
+        "limit": as_amount(raw.get("limit")),
+        "status": as_text(raw.get("status"), 160),
+        "text": as_text(raw.get("text"), 240),
     }
 
 
@@ -228,6 +273,8 @@ def sanitize_report(raw: Any) -> dict[str, Any] | None:
         "source": as_text(raw.get("source"), 400),
         "note": as_text(raw.get("note"), 600),
         "windows": windows,
+        "resets": sanitize_list(raw.get("resets"), sanitize_reset, MAX_RESETS),
+        "credits": sanitize_list(raw.get("credits"), sanitize_credit, MAX_CREDITS),
         "summary": {
             "five_hour": sanitize_cell(summary.get("five_hour")),
             "week_global": sanitize_cell(summary.get("week_global")),

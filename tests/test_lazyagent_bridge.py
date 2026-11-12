@@ -77,7 +77,37 @@ claude = {
             "resets_at": None,
             "reset_in_seconds": 0,
             "reset_relative": ""
+        },
+        {
+            "label": "7-day",
+            "scope": "Fable",
+            "detail": "11% of the weekly limit used, capped at 50%",
+            "window_minutes": 10080,
+            "used_percent": 21,
+            "expected_percent": 30,
+            "pace_known": True,
+            "pace_ratio": 0.7,
+            "pace_label": "underutilizing",
+            "used_severity": "ok",
+            "resets_at": None,
+            "reset_in_seconds": 0,
+            "reset_relative": ""
         }
+    ],
+    "resets": [
+        {"label": "New model launch: one Fable reset", "left": 1, "total": 1, "usable": True,
+         "status": "", "expires_at": "2027-03-09T07:59:00Z", "expires_in_seconds": 10081971,
+         "next_available_at": None, "next_available_in_seconds": 0,
+         "text": "1 of 1 left · expires in 116d 16h (Tue 9 Mar 08:59 CET) · usable now"},
+        {"label": 7, "left": "many", "total": -3, "usable": "yes", "status": None,
+         "expires_in_seconds": -5, "next_available_in_seconds": True},
+        "not a reset"
+    ],
+    "credits": [
+        {"label": "Extra usage", "unit": "EUR", "enabled": False, "balance": None, "used": 0,
+         "limit": None, "status": "set by your organization", "text": "disabled · set by your organization"},
+        {"label": "Balance", "unit": "USD", "enabled": True, "balance": -2.5, "used": "lots",
+         "limit": True, "status": "", "text": ""}
     ],
     "summary": {
         "five_hour": {"used_percent": 4, "expected_percent": 73.57, "severity": "ok", "text": "4.0% used / 73.6% exp"},
@@ -192,13 +222,36 @@ class BridgeTest(unittest.TestCase):
         self.assertEqual([r["agent"] for r in result["reports"]], ["claude", "codex", "bogus"])
         claude = result["reports"][0]
         self.assertEqual(claude["provider"], "Claude Code")
-        self.assertEqual(len(claude["windows"]), 2)
+        self.assertEqual(len(claude["windows"]), 3)
+        self.assertEqual(claude["windows"][0]["scope"], "")
+        self.assertEqual(claude["windows"][0]["detail"], "")
+        self.assertEqual(claude["windows"][2]["scope"], "Fable")
+        self.assertEqual(claude["windows"][2]["detail"], "11% of the weekly limit used, capped at 50%")
         self.assertEqual(claude["windows"][0]["pace_label"], "underutilizing")
         self.assertEqual(claude["windows"][1]["used_severity"], "danger")
         self.assertEqual(claude["windows"][1]["resets_at"], "")
         self.assertEqual(claude["summary"]["week_global"]["severity"], "danger")
         self.assertEqual(claude["fetched_at"], NOW)
         self.assertFalse(claude["stale"])
+
+        self.assertEqual(claude["resets"], [
+            {"label": "New model launch: one Fable reset", "left": 1, "total": 1, "usable": True,
+             "status": "", "expires_in_seconds": 10081971, "next_available_in_seconds": 0,
+             "text": "1 of 1 left · expires in 116d 16h (Tue 9 Mar 08:59 CET) · usable now"},
+            {"label": "Limit reset", "left": 0, "total": 0, "usable": False, "status": "",
+             "expires_in_seconds": 0, "next_available_in_seconds": 0, "text": ""},
+        ])
+        self.assertEqual(claude["credits"][0]["balance"], None)
+        self.assertEqual(claude["credits"][0]["used"], 0.0)
+        self.assertFalse(claude["credits"][0]["enabled"])
+        self.assertEqual(claude["credits"][0]["text"], "disabled · set by your organization")
+        self.assertEqual(claude["credits"][1]["balance"], -2.5)
+        self.assertIsNone(claude["credits"][1]["used"])
+        self.assertIsNone(claude["credits"][1]["limit"])
+
+        codex = result["reports"][1]
+        self.assertEqual(codex["resets"], [])
+        self.assertEqual(codex["credits"], [])
 
         bogus = result["reports"][2]
         self.assertEqual(bogus["provider"], "bogus")
@@ -317,6 +370,10 @@ class BridgeTest(unittest.TestCase):
         self.assertIn("claude", by_agent)
         self.assertTrue(by_agent["claude"]["stale"])
         self.assertEqual(by_agent["claude"]["fetched_at"], NOW)
+        # Resets, credits and scoped windows survive the state file round-trip.
+        self.assertEqual(len(by_agent["claude"]["resets"]), 2)
+        self.assertIsNone(by_agent["claude"]["credits"][0]["balance"])
+        self.assertEqual(by_agent["claude"]["windows"][2]["scope"], "Fable")
         self.assertFalse(by_agent["codex"]["stale"])
         self.assertEqual(by_agent["codex"]["fetched_at"], NOW + 60)
         self.assertEqual([r["agent"] for r in result["reports"]], ["claude", "codex"])
