@@ -181,6 +181,98 @@ function paceTone(window) {
   return "unknown"
 }
 
+// "7-day window", or "7-day window (Fable)" for a window limited to one
+// model or feature, matching lazyagent's detailed view.
+function windowTitle(window) {
+  var label = String((window && window.label) || "window") + " window"
+  var scope = window ? String(window.scope || "") : ""
+  return scope !== "" ? label + " (" + scope + ")" : label
+}
+
+function resetsOf(report) {
+  return report ? toList(report.resets) : []
+}
+
+function creditsOf(report) {
+  return report ? toList(report.credits) : []
+}
+
+function hasExtras(report) {
+  if (!report) return false
+  return resetsOf(report).length > 0 || creditsOf(report).length > 0
+    || String(report.source || "") !== "" || String(report.note || "") !== ""
+}
+
+// What the More toggle hides, e.g. "4 resets · 1 credit pool", or "Source and
+// notes" when the section only carries provenance lines.
+function extrasSummary(report) {
+  var parts = []
+  var resets = resetsOf(report).length
+  var credits = creditsOf(report).length
+  if (resets > 0) parts.push(resets + (resets === 1 ? " reset" : " resets"))
+  if (credits > 0) parts.push(credits + (credits === 1 ? " credit pool" : " credit pools"))
+  if (parts.length === 0 && hasExtras(report)) return "Source and notes"
+  return parts.join(" · ")
+}
+
+function resetCountText(reset) {
+  if (!reset) return ""
+  var left = Math.max(0, Math.floor(asNumber(reset.left, 0)))
+  var total = Math.max(0, Math.floor(asNumber(reset.total, 0)))
+  return total > 0 ? left + " of " + total + " left" : left + " left"
+}
+
+// A reset countdown ticking from the report's fetch instant. Returns -1 when
+// the provider gave no instant, 0 once it has passed.
+function countdownSeconds(baseSeconds, fetchedAtMs, nowMs) {
+  var base = asNumber(baseSeconds, 0)
+  if (base <= 0) return -1
+  var elapsed = Math.max(0, (asNumber(nowMs, 0) - asNumber(fetchedAtMs, 0)) / 1000)
+  return Math.max(0, base - elapsed)
+}
+
+// "Usable now · expires in 28d 6h", "only at a usage limit · back in 3d 2h".
+function resetDetail(reset, fetchedAtMs, nowMs) {
+  if (!reset) return ""
+  var parts = []
+  var status = String(reset.status || "")
+  if (status !== "") parts.push(status.charAt(0).toUpperCase() + status.substring(1))
+  else if (reset.usable === true) parts.push("Usable now")
+  var next = countdownSeconds(reset.next_available_in_seconds, fetchedAtMs, nowMs)
+  if (next > 0) parts.push("back in " + formatDuration(next))
+  else if (next === 0) parts.push("available again")
+  var expires = countdownSeconds(reset.expires_in_seconds, fetchedAtMs, nowMs)
+  if (expires > 0) parts.push("expires in " + formatDuration(expires))
+  else if (expires === 0) parts.push("expired")
+  var text = parts.join(" · ")
+  return text.charAt(0).toUpperCase() + text.substring(1)
+}
+
+function resetUsable(reset) {
+  return !!reset && reset.usable === true
+    && Math.floor(asNumber(reset.left, 0)) > 0 && String(reset.status || "") === ""
+}
+
+function isAmount(value) {
+  return value !== null && value !== undefined && typeof value === "number" && isFinite(value)
+}
+
+// Spend against a limit (Cursor on-demand, Claude extra usage) as 0..1, or -1
+// when the pool has no limit to draw a meter against.
+function creditFraction(credit) {
+  if (!credit || !isAmount(credit.used) || !isAmount(credit.limit) || credit.limit <= 0) return -1
+  return clamp(credit.used / credit.limit, 0, 1)
+}
+
+// lazyagent's own one-line rendering; it carries no countdown, so it never
+// goes stale while the panel is open.
+function creditText(credit) {
+  if (!credit) return ""
+  var text = String(credit.text || "")
+  if (text !== "") return text
+  return credit.enabled === true ? "available" : "disabled"
+}
+
 function severityRank(severity) {
   var value = String(severity || "default")
   if (value === "danger") return 3
@@ -296,10 +388,19 @@ function tooltipText(loaded, installed, reports, errors) {
     var parts = []
     if (summary.five_hour) parts.push("5h " + percentText(summary.five_hour.used_percent))
     if (summary.week_global) parts.push("week " + percentText(summary.week_global.used_percent))
+    // Scoped windows (Claude's Fable weekly cap) never fill the summary cells.
+    var scoped = windowsOf(report)
+    var hasPlanWide = parts.length > 0
+    for (var k = 0; k < scoped.length && hasPlanWide; k++) {
+      if (String(scoped[k].scope || "") === "") continue
+      parts.push(String(scoped[k].scope) + " " + percentText(scoped[k].used_percent))
+    }
     if (parts.length === 0) {
       var windows = windowsOf(report)
       for (var j = 0; j < windows.length; j++) {
-        parts.push(windows[j].label + " " + percentText(windows[j].used_percent))
+        var scope = String(windows[j].scope || "")
+        parts.push((scope !== "" ? scope + " " : "") + windows[j].label + " "
+          + percentText(windows[j].used_percent))
       }
     }
     lines.push(String(report.short_name || report.provider || report.agent) + ": " + parts.join(" · ")

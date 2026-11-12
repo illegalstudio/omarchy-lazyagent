@@ -19,7 +19,9 @@ vm.runInNewContext(source + "\n" + [
   "worstSeverity", "anyOverutilizing", "errorsOfKind", "agentName",
   "silentAgentsText", "statusText", "tooltipText", "backoffRemaining",
   "reportFetchedAtMs", "staleText", "reportFor", "anyStale", "issueText",
-  "paceJustReset", "paceAvailableIn",
+  "paceJustReset", "paceAvailableIn", "windowTitle", "resetsOf", "creditsOf",
+  "hasExtras", "extrasSummary", "resetCountText", "resetDetail", "resetUsable",
+  "creditFraction", "creditText",
 ].map((name) => `Model.${name} = ${name};`).join("\n"), { Model });
 
 const claudeWindow = {
@@ -218,6 +220,66 @@ test("tooltipText summarises every pool", () => {
   assert.equal(Model.tooltipText(true, true, [], []), "Lazyagent: no agents reporting");
   assert.equal(Model.tooltipText(true, true, [{ agent: "grok", short_name: "Grok",
     windows: [{ label: "weekly", used_percent: 5 }], summary: {} }], []), "Grok: weekly 5%");
+});
+
+test("scoped windows get their own title and tooltip entry", () => {
+  const fable = { label: "7-day", scope: "Fable", detail: "11% of the weekly limit used, capped at 50%",
+    used_percent: 21 };
+  assert.equal(Model.windowTitle(codexWindow), "7-day window");
+  assert.equal(Model.windowTitle(fable), "7-day window (Fable)");
+  const claude = { ...reports[0], windows: [claudeWindow, fable] };
+  assert.equal(Model.tooltipText(true, true, [claude], []), "Claude: 5h 4% · week 5% · Fable 21%");
+  // Without summary cells every window is listed, the scoped one by name.
+  assert.equal(Model.tooltipText(true, true, [{ short_name: "Claude", summary: {},
+    windows: [{ label: "7-day", used_percent: 23 }, fable] }], []), "Claude: 7-day 23% · Fable 7-day 21%");
+  assert.equal(Model.headlineUsed([claude]), 21);
+});
+
+test("resets count down from the report's fetch instant", () => {
+  const grant = { label: "One full limit reset", left: 1, total: 1, usable: true, status: "",
+    expires_in_seconds: 3 * 86400 + 7200, next_available_in_seconds: 0 };
+  const codex = { label: "Full reset", left: 2, total: 0, usable: true, status: "",
+    expires_in_seconds: 0, next_available_in_seconds: 0 };
+  const weekly = { label: "5-hour limit reset", left: 0, total: 1, usable: false,
+    status: "only at a usage limit", expires_in_seconds: 0, next_available_in_seconds: 90061 };
+  assert.equal(Model.resetCountText(grant), "1 of 1 left");
+  assert.equal(Model.resetCountText(codex), "2 left");
+  assert.equal(Model.resetDetail(grant, 0, 0), "Usable now · expires in 3d 2h");
+  assert.equal(Model.resetDetail(grant, 0, 3600 * 1000), "Usable now · expires in 3d 1h");
+  assert.equal(Model.resetDetail(grant, 0, 4 * 86400 * 1000), "Usable now · expired");
+  assert.equal(Model.resetDetail(codex, 0, 0), "Usable now");
+  assert.equal(Model.resetDetail(weekly, 0, 0), "Only at a usage limit · back in 1d 1h");
+  assert.equal(Model.resetDetail({ left: 1, usable: false }, 0, 0), "");
+  assert.equal(Model.resetUsable(grant), true);
+  assert.equal(Model.resetUsable(weekly), false);
+  assert.equal(Model.resetUsable({ ...grant, left: 0 }), false);
+});
+
+test("credits keep lazyagent's text and meter spend against a limit", () => {
+  const extra = { label: "Extra usage", unit: "EUR", enabled: false, balance: null, used: 0, limit: null,
+    status: "set by your organization", text: "disabled · set by your organization" };
+  const onDemand = { label: "On-demand", unit: "USD", enabled: true, balance: null, used: 45, limit: 50,
+    status: "", text: "$45.00 of $50.00 used" };
+  assert.equal(Model.creditText(extra), "disabled · set by your organization");
+  assert.equal(Model.creditText({ enabled: true }), "available");
+  assert.equal(Model.creditText({ enabled: false }), "disabled");
+  assert.equal(Model.creditFraction(extra), -1);
+  assert.equal(Model.creditFraction(onDemand), 0.9);
+  assert.equal(Model.creditFraction({ used: 80, limit: 50 }), 1);
+  assert.equal(Model.creditFraction({ used: 5, limit: 0 }), -1);
+});
+
+test("More summarises what it hides", () => {
+  const report = { resets: [{}, {}, {}, {}], credits: [{}], note: "Note." };
+  assert.equal(Model.hasExtras(report), true);
+  assert.equal(Model.extrasSummary(report), "4 resets · 1 credit pool");
+  assert.equal(Model.extrasSummary({ resets: [{}], credits: [{}, {}] }), "1 reset · 2 credit pools");
+  assert.equal(Model.extrasSummary({ note: "Note." }), "Source and notes");
+  assert.equal(Model.extrasSummary({}), "");
+  assert.equal(Model.hasExtras({ note: "Note." }), true);
+  assert.equal(Model.hasExtras({ resets: [], credits: [] }), false);
+  assert.equal(Model.hasExtras(null), false);
+  assert.equal(Model.resetsOf({}).length, 0);
 });
 
 console.log(`\n${passed} model tests passed`);

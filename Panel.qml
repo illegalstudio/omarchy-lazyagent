@@ -38,8 +38,37 @@ Panel {
   readonly property string tooltipText: Model.tooltipText(
     backend.loaded, backend.installed, backend.reports, backend.errors)
 
+  // Pools whose More section is open, keyed by poolKey(). Kept here rather
+  // than in ReportSection so a refresh that rebuilds the sections keeps it.
+  property var expandedPools: ({})
+
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
+
+  function poolKey(report) {
+    return String((report && report.agent) || "") + "/" + String((report && report.provider) || "")
+  }
+
+  function setExpanded(key, value) {
+    var next = {}
+    for (var name in expandedPools) next[name] = expandedPools[name]
+    next[key] = value
+    expandedPools = next
+  }
+
+  // M opens every More section, or closes them all when any is open.
+  function toggleAllMore() {
+    var reports = Model.toList(backend.reports)
+    var anyOpen = false
+    for (var i = 0; i < reports.length; i++) {
+      if (expandedPools[poolKey(reports[i])] === true) anyOpen = true
+    }
+    var next = {}
+    for (var j = 0; j < reports.length; j++) {
+      if (Model.hasExtras(reports[j])) next[poolKey(reports[j])] = !anyOpen
+    }
+    expandedPools = next
+  }
 
   function clamp(value, minimum, maximum) {
     return Math.max(minimum, Math.min(maximum, value))
@@ -73,6 +102,7 @@ Panel {
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
     function refresh(): string { backend.refresh("manual"); return "ok" }
+    function more(): string { root.toggleAllMore(); return "ok" }
     function status(): string { return backend.statusText }
     function debug(): string {
       return JSON.stringify({
@@ -140,6 +170,7 @@ Panel {
       onTextKey: function(text) {
         var key = String(text).toLowerCase()
         if (key === "r") backend.refresh()
+        else if (key === "m") root.toggleAllMore()
       }
 
       Flickable {
@@ -333,8 +364,8 @@ Panel {
 
             Text {
               textFormat: Text.PlainText
-              text: backend.agentFilter === "all" ? "R to refresh"
-                : Model.agentName(backend.agentFilter) + " only  ·  R to refresh"
+              text: backend.agentFilter === "all" ? "M more  ·  R refresh"
+                : Model.agentName(backend.agentFilter) + " only  ·  M more  ·  R refresh"
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
@@ -368,6 +399,11 @@ Panel {
     readonly property var windows: Model.windowsOf(report)
     readonly property string staleLabel: Model.staleText(report, backend.nowMs)
     readonly property double fetchedAtMs: Model.reportFetchedAtMs(report, backend.fetchedAtMs)
+    readonly property var resets: Model.resetsOf(report)
+    readonly property var credits: Model.creditsOf(report)
+    readonly property bool hasExtras: Model.hasExtras(report)
+    readonly property string key: root.poolKey(report)
+    readonly property bool expanded: hasExtras && root.expandedPools[key] === true
 
     spacing: Style.space(8)
 
@@ -432,6 +468,206 @@ Panel {
         }
       }
     }
+
+    // Resets, extra credits and provenance stay behind More so the
+    // windows remain scannable at a glance.
+    RowLayout {
+      visible: section.hasExtras
+      width: parent.width
+      spacing: Style.space(8)
+
+      Button {
+        text: section.expanded ? "Less" : "More"
+        iconText: section.expanded ? "󰅃" : "󰅀"
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        fontSize: Style.font.caption
+        iconSize: Style.font.caption
+        horizontalPadding: Style.space(6)
+        verticalPadding: Style.space(2)
+        bordered: true
+        focusable: false
+        onClicked: root.setExpanded(section.key, !section.expanded)
+      }
+
+      Text {
+        Layout.fillWidth: true
+        visible: !section.expanded
+        textFormat: Text.PlainText
+        text: Model.extrasSummary(section.report)
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        elide: Text.ElideRight
+      }
+    }
+
+    Column {
+      visible: section.expanded
+      width: parent.width
+      spacing: Style.space(10)
+      opacity: section.staleLabel !== "" ? 0.72 : 1.0
+
+      Column {
+        visible: section.resets.length > 0
+        width: parent.width
+        spacing: Style.space(8)
+
+        ExtrasHeader { text: "Limit resets" }
+
+        Repeater {
+          model: section.resets.length
+
+          ResetRow {
+            required property int index
+            width: parent.width
+            reset: index < section.resets.length ? section.resets[index] : ({})
+            fetchedAtMs: section.fetchedAtMs
+          }
+        }
+      }
+
+      Column {
+        visible: section.credits.length > 0
+        width: parent.width
+        spacing: Style.space(8)
+
+        ExtrasHeader { text: "Extra credits" }
+
+        Repeater {
+          model: section.credits.length
+
+          CreditRow {
+            required property int index
+            width: parent.width
+            credit: index < section.credits.length ? section.credits[index] : ({})
+          }
+        }
+      }
+
+      Notice {
+        visible: text !== ""
+        width: parent.width
+        font.pixelSize: Style.font.caption
+        text: [String(section.report.source || ""), String(section.report.note || "")]
+          .filter(function(line) { return line !== "" }).join("\n")
+      }
+    }
+  }
+
+  component ExtrasHeader: Text {
+    textFormat: Text.PlainText
+    color: root.dim
+    font.family: root.fontFamily
+    font.pixelSize: Style.font.caption
+    font.bold: true
+  }
+
+  // A banked limit reset: label and how many are left, then whether it can
+  // be redeemed now and when it lapses or comes back. lazyagent only
+  // reports resets; redeeming one stays in the provider's own client.
+  component ResetRow: Column {
+    id: resetRow
+
+    property var reset: ({})
+    property double fetchedAtMs: backend.fetchedAtMs
+    readonly property bool usable: Model.resetUsable(reset)
+
+    spacing: Style.space(2)
+
+    RowLayout {
+      width: parent.width
+      spacing: Style.space(8)
+
+      Text {
+        Layout.fillWidth: true
+        textFormat: Text.PlainText
+        text: String(resetRow.reset.label || "Limit reset")
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        wrapMode: Text.WordWrap
+      }
+
+      Text {
+        Layout.alignment: Qt.AlignTop
+        textFormat: Text.PlainText
+        text: Model.resetCountText(resetRow.reset)
+        color: resetRow.usable ? root.foreground : root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+        font.bold: true
+      }
+    }
+
+    Text {
+      visible: text !== ""
+      width: parent.width
+      textFormat: Text.PlainText
+      text: Model.resetDetail(resetRow.reset, resetRow.fetchedAtMs, backend.nowMs)
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
+    }
+  }
+
+  // A balance or spend pool beyond the included usage, with a thin meter
+  // when the provider reports spend against a limit.
+  component CreditRow: Column {
+    id: creditRow
+
+    property var credit: ({})
+    readonly property real fraction: Model.creditFraction(credit)
+
+    spacing: Style.space(4)
+    opacity: creditRow.credit.enabled === true ? 1.0 : 0.72
+
+    RowLayout {
+      width: parent.width
+      spacing: Style.space(8)
+
+      Text {
+        textFormat: Text.PlainText
+        text: String(creditRow.credit.label || "Credits")
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+
+      Text {
+        Layout.fillWidth: true
+        textFormat: Text.PlainText
+        text: Model.creditText(creditRow.credit)
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignRight
+        wrapMode: Text.WordWrap
+      }
+    }
+
+    Item {
+      visible: creditRow.fraction >= 0
+      width: parent.width
+      implicitHeight: Math.max(Style.space(4), Math.round(Style.spacing.controlHeight * 0.12))
+
+      Rectangle {
+        id: creditTrack
+        anchors.fill: parent
+        radius: height / 2
+        color: root.track
+      }
+
+      Rectangle {
+        anchors.left: creditTrack.left
+        anchors.verticalCenter: creditTrack.verticalCenter
+        height: creditTrack.height
+        radius: creditTrack.radius
+        width: creditTrack.width * Math.max(0, creditRow.fraction)
+        color: creditRow.fraction >= 0.9 ? root.urgent : root.foreground
+      }
+    }
   }
 
   // A rate-limit window: label and used %, meter with the expected-pace
@@ -462,7 +698,7 @@ Panel {
       Text {
         id: windowLabel
         textFormat: Text.PlainText
-        text: String(limitRow.window.label || "window") + " window"
+        text: Model.windowTitle(limitRow.window)
         color: root.foreground
         font.family: root.fontFamily
         font.pixelSize: Style.font.body
@@ -578,6 +814,19 @@ Panel {
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
       }
+    }
+
+    // Provider context, such as a scoped window's share of the plan-wide
+    // limit ("11% of the weekly limit used, capped at 50%").
+    Text {
+      visible: text !== ""
+      width: parent.width
+      textFormat: Text.PlainText
+      text: String(limitRow.window.detail || "")
+      color: root.dim
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      wrapMode: Text.WordWrap
     }
   }
 }
