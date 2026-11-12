@@ -91,6 +91,16 @@ Click the icon to open the panel. Each metered pool gets a section, and each rat
 - The **pace pill** is lazyagent's verdict. Underutilizing means used is below 0.85 × expected, on track is within 0.85 to 1.15 ×, overutilizing is above 1.15 ×. The ratio and the expected percentage sit next to it.
 - **Resets in** counts down live while the panel is open.
 
+Windows limited to one model or feature get their own row and meter, named after their scope, for example Claude's **7-day window (Fable)**. When the provider says how the scoped meter relates to the plan-wide one ("11% of the weekly limit used, capped at 50%"), that line sits under the row.
+
+Each section ends with a **More** button that shows what it hides, such as "4 resets · 1 credit pool". It opens:
+
+- **Limit resets** the account holds (Claude reset grants such as the Fable launch resets, Codex banked resets): how many are left, whether one can be redeemed now, and live countdowns to when they expire or come back. The panel only reports them; redeeming a reset stays in the provider's own client.
+- **Extra credits** beyond the included usage (Claude extra usage, Codex credits, Cursor on-demand spend, Grok prepaid balance), with a thin meter when the provider reports spend against a limit.
+- The provenance line and disclaimer lazyagent attaches to the provider.
+
+Open sections stay open across refreshes. Press `M` to open or close every section at once.
+
 Agents that are installed but failed to answer are listed under **Issues**. Agents that are simply not installed or not logged in are mentioned in one dim line at the bottom.
 
 Right-click the bar icon to refresh without opening the panel. Opening the panel refreshes only when the data is older than a minute.
@@ -117,7 +127,7 @@ lazyagent reads each provider's usage through the undocumented endpoints their o
 ## Requirements
 
 - Omarchy 4 or newer with the current shell plugin system.
-- A separately installed [lazyagent](https://github.com/illegalstudio/lazyagent#install) executable, version 0.15 or newer for the `limits --json` command. On Omarchy, use the Arch package from the release page (see [Install](#install)).
+- A separately installed [lazyagent](https://github.com/illegalstudio/lazyagent#install) executable, version 0.15 or newer for the `limits --json` command, 0.16 or newer for scoped windows, resets, and credits (older versions simply show none). On Omarchy, use the Arch package from the release page (see [Install](#install)).
 - Python 3 for the bridge script, included with Omarchy.
 - Logged-in sessions for the agents you want to see. lazyagent explains where it reads each token from in `lazyagent limits --help`.
 
@@ -144,6 +154,7 @@ When the panel has focus:
 | Key | Action |
 | --- | --- |
 | `R`, `Enter`, `Space` | Refresh limits. |
+| `M` | Open or close every **More** section. |
 | `J`, `K`, arrows | Scroll the panel. |
 | `Tab`, `Shift+Tab` | Switch to the neighbouring bar panel. |
 | `Esc` | Close the panel. |
@@ -154,6 +165,7 @@ When the panel has focus:
 omarchy-shell ipc call illegalstudio.omarchy-lazyagent toggle
 omarchy-shell ipc call illegalstudio.omarchy-lazyagent refresh
 omarchy-shell ipc call illegalstudio.omarchy-lazyagent status
+omarchy-shell ipc call illegalstudio.omarchy-lazyagent more
 ```
 
 ## Development install
