@@ -19,6 +19,7 @@ vm.runInNewContext(source + "\n" + [
   "worstSeverity", "anyOverutilizing", "errorsOfKind", "agentName",
   "silentAgentsText", "statusText", "tooltipText", "backoffRemaining",
   "reportFetchedAtMs", "staleText", "reportFor", "anyStale", "issueText",
+  "paceJustReset", "paceAvailableIn",
 ].map((name) => `Model.${name} = ${name};`).join("\n"), { Model });
 
 const claudeWindow = {
@@ -119,6 +120,19 @@ test("pace helpers follow lazyagent's labels", () => {
   assert.equal(Model.paceText({ pace_known: false }), "Pace unknown");
   assert.equal(Model.paceDetail(claudeWindow), "0.05× of expected 73.6%");
   assert.equal(Model.paceDetail({ pace_known: false }), "");
+
+  // 7-day window 0.5% in: lazyagent withholds the pace until 1% has elapsed.
+  const reset = { label: "7-day", window_minutes: 10080, expected_percent: 0.5, pace_known: false };
+  assert.equal(Model.paceJustReset(reset), true);
+  assert.equal(Model.paceJustReset(claudeWindow), false);
+  assert.equal(Model.paceJustReset({ pace_known: false, expected_percent: 0.5, window_minutes: 0 }), false);
+  assert.equal(Model.paceText(reset), "Window just reset");
+  assert.equal(Model.paceTone(reset), "unknown");
+  // 0.5% of 10080 minutes is 50.4 minutes.
+  assert.equal(Model.paceAvailableIn(reset, 0, 0), 3024);
+  assert.equal(Model.paceDetail(reset, 0, 0), "Pace in ~50m");
+  assert.equal(Model.paceDetail(reset, 0, 20 * 60 * 1000), "Pace in ~30m");
+  assert.equal(Model.paceDetail(reset, 0, 60 * 60 * 1000), "Pace at the next refresh");
 });
 
 test("alarming windows are severe or nearly exhausted", () => {

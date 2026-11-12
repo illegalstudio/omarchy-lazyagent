@@ -136,13 +136,37 @@ function issueText(error, reports, nowMs, backoffRemainingSec) {
 // Pace as lazyagent defines it: used < 0.85 × elapsed is underutilizing,
 // > 1.15 × is overutilizing. The label comes from lazyagent; this only maps
 // it to a display string and a tone.
+// lazyagent withholds the pace until 1% of the window has elapsed, since
+// used/elapsed is meaningless right after a reset. Mirror its CLI wording.
+function paceJustReset(window) {
+  if (!window || window.pace_known === true) return false
+  return asNumber(window.expected_percent, 0) < 1
+    && asNumber(window.window_minutes, 0) > 0
+}
+
+// Seconds until 1% of the window has elapsed, counted from the snapshot's
+// fetch instant so it keeps ticking while the panel is open.
+function paceAvailableIn(window, fetchedAtMs, nowMs) {
+  if (!paceJustReset(window)) return 0
+  var windowSeconds = asNumber(window.window_minutes, 0) * 60
+  var missing = (1 - asNumber(window.expected_percent, 0)) / 100 * windowSeconds
+  var elapsed = Math.max(0, (asNumber(nowMs, 0) - asNumber(fetchedAtMs, 0)) / 1000)
+  return Math.max(0, missing - elapsed)
+}
+
 function paceText(window) {
+  if (paceJustReset(window)) return "Window just reset"
   if (!window || !window.pace_known || !window.pace_label) return "Pace unknown"
   var label = String(window.pace_label)
   return label.charAt(0).toUpperCase() + label.substring(1)
 }
 
-function paceDetail(window) {
+function paceDetail(window, fetchedAtMs, nowMs) {
+  if (paceJustReset(window)) {
+    var seconds = paceAvailableIn(window, fetchedAtMs, nowMs)
+    return seconds > 0 ? "Pace in ~" + formatDuration(seconds)
+      : "Pace at the next refresh"
+  }
   if (!window || !window.pace_known) return ""
   return ratioText(window.pace_ratio) + " of expected " + percentText(window.expected_percent)
 }

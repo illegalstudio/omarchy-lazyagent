@@ -564,7 +564,7 @@ Panel {
       Text {
         Layout.fillWidth: true
         textFormat: Text.PlainText
-        text: Model.paceDetail(limitRow.window)
+        text: Model.paceDetail(limitRow.window, limitRow.fetchedAtMs, backend.nowMs)
         color: root.dim
         font.family: root.fontFamily
         font.pixelSize: Style.font.caption
