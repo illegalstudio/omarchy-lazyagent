@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "illegalstudio.omarchy-lazyagent",
   "name": "Lazyagent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": "illegalstudio",
   "license": "MIT",
   "description": "Coding agent rate limits and pace in the Omarchy bar, powered by lazyagent.",
